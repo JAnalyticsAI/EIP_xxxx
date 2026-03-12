@@ -13,3 +13,7 @@ ff = "0.11"
 # Note: these versions/resolutions are a starting point. Adjust to a working set
 # for your environment. The circuit implementation in `src/circuit.rs` is a
 # minimal skeleton intended to be expanded with Poseidon and signature gadgets.
+
+ # Serialization for witness export
+ serde = { version = "1.0", features = ["derive"] }
+ serde_json = "1.0"
