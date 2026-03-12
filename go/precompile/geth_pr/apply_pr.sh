@@ -18,12 +18,19 @@ pushd "$TMPDIR/repo" > /dev/null
 
 git checkout -b "$BRANCH" "origin/$BASE_BRANCH"
 
+SCRIPTDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 echo "Copying zktx package into repo/core/precompiled/zktx"
 mkdir -p core/precompiled/zktx
-cp -r "$(pwd)/../../go/precompile/geth_pr/core/precompiled/zktx/"* core/precompiled/zktx/
+SRC="$SCRIPTDIR/core/precompiled/zktx"
+if [ ! -d "$SRC" ]; then
+  echo "source package not found: $SRC"
+  exit 2
+fi
+cp -r "$SRC/"* core/precompiled/zktx/
 
 echo "Adding registration patch"
-cp "$(pwd)/../../go/precompile/geth_pr/0001-register-zktx-precompile.patch" /tmp/zktx_register.patch
+cp "$SCRIPTDIR/0001-register-zktx-precompile.patch" /tmp/zktx_register.patch
 if git apply /tmp/zktx_register.patch; then
   echo "Patch applied"
 else

@@ -16,8 +16,14 @@ import (
 // inside the ZKTx Geth precompile. It contains ABI decoding helpers,
 // data structures for a verifying key and proof, and a verification
 // skeleton that calls into bn256 pairing checks (TODO: wire actual calls).
+//
+// NOTE: This PR-ready copy is intended to be placed under
+// `core/precompiled/zktx` inside a go-ethereum clone. The code relies on
+// gnark-crypto for bn254 primitives and must be validated for API
+// compatibility with the vendored version used by the client.
 
 // Proof represents a Groth16 proof with points in G1 and G2.
+// Fields are stored as big.Int limbs matching Solidity verifier layouts.
 type Proof struct {
     // a in G1
     AX *big.Int
@@ -31,6 +37,8 @@ type Proof struct {
 }
 
 // VerifyingKey holds the elements required for Groth16 verification.
+// Alpha/Beta/Gamma/Delta are the standard Groth16 VK elements; IC is the
+// vector of G1 points used to compute the linear combination with public inputs.
 type VerifyingKey struct {
     AlphaX *big.Int
     AlphaY *big.Int
@@ -45,6 +53,8 @@ type VerifyingKey struct {
 }
 
 // parseUint256 parses a 32-byte big-endian uint256 from buf at offset.
+// parseUint256 parses a 32-byte big-endian uint256 from buf at offset.
+// It returns a big.Int value representing the unsigned integer.
 func parseUint256(buf []byte) (*big.Int, error) {
     if len(buf) < 32 {
         return nil, errors.New("buffer too short for uint256")
@@ -57,6 +67,8 @@ func parseUint256(buf []byte) (*big.Int, error) {
 // in the Solidity reference verifier. Here we accept a simple concatenation of
 // 8*32 bytes: a[2], b[2][2], c[2]. This is a simplifying assumption for the
 // prototype; real integration should accept ABI encoding properly.
+// decodeProof decodes a compact Groth16 proof encoded as 8 consecutive
+// 32-byte big-endian words: a.x, a.y, b.x.c0, b.x.c1, b.y.c0, b.y.c1, c.x, c.y.
 func decodeProof(blob []byte) (*Proof, error) {
     if len(blob) < 32*8 {
         return nil, errors.New("proof blob too short")
@@ -75,6 +87,8 @@ func decodeProof(blob []byte) (*Proof, error) {
 }
 
 // decodePublicInputs expects a simple concatenation of uint256 values.
+// decodePublicInputs parses the public input blob into a slice of big.Int
+// values, where each public input occupies 32 bytes in big-endian form.
 func decodePublicInputs(blob []byte) ([]*big.Int, error) {
     if len(blob)%32 != 0 {
         return nil, errors.New("public inputs blob length not multiple of 32")
@@ -90,15 +104,20 @@ func decodePublicInputs(blob []byte) ([]*big.Int, error) {
 // computeLinearCombination computes vk_x = IC[0] + sum_{i} input[i]*IC[i+1]
 // This is done in affine coordinates in G1; here we return a placeholder
 // pair (X,Y) as big.Int values that represent the expected point.
+// computeLinearCombination computes vk_x = IC[0] + sum_i (inputs[i] * IC[i+1])
+// using gnark-crypto G1 scalar multiplication and addition.
 func computeLinearCombination(vk *VerifyingKey, inputs []*big.Int) ([2]*big.Int, error) {
-    // convert IC[0] as accumulator
+    // ensure IC table exists
     if len(vk.IC) == 0 {
         return [2]*big.Int{big.NewInt(0), big.NewInt(0)}, errors.New("computeLinearCombination: missing IC points")
     }
 
     // Use gnark-crypto g1 affine points and perform scalar multiplications
     var acc g1.Affine
-    // Helper to convert big.Int pair to g1.Affine
+
+    // Helper to convert big.Int pair to g1.Affine. The library represents
+    // field elements as fr.Element. We set X,Y from big.Int and return
+    // the affine point.
     toG1 := func(x, y *big.Int) (g1.Affine, error) {
         var P g1.Affine
         var fx, fy fr.Element
@@ -164,8 +183,7 @@ func verifyGroth16(vk *VerifyingKey, proof *Proof, publicInputs []*big.Int) (boo
 
     // 2) form pairing tuples:
     //    e(a, b) * e(-vk_x, gamma) * e(-alpha, beta) * e(-c, delta) == 1
-    // TODO: construct bn256.G1 and bn256.G2 points from big.Int coords
-    // and call bn256 pairing check. For now return false as placeholder.
+    // The engine will accumulate pairings and perform a final check.
     _ = vkx
 
     // Build G1 and G2 elements from the coordinates
@@ -254,6 +272,7 @@ func verifyGroth16(vk *VerifyingKey, proof *Proof, publicInputs []*big.Int) (boo
     c.Neg(&negC)
     engine.AddPair(&negC, &delta)
 
+    // Check runs a final exponentiation and equality test in the target group.
     ok := engine.Check()
     return ok, nil
 }

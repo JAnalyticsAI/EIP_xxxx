@@ -28,41 +28,45 @@ func (p *ZKTxPrecompile) RequiredGas(input []byte) uint64 {
 // For the prototype we accept raw input bytes (ABI-encoded call) and return a
 // 32-byte ABI-style boolean (0 / 1) in the returned byte slice.
 func (p *ZKTxPrecompile) Run(input []byte) ([]byte, error) {
-    // NOTE: In a real implementation you would decode the ABI-encoded
-    // arguments: (bytes proof, bytes publicInputs), then run the native
-    // verifier (pairings, polynomial commitment checks, or STARK checks).
-    // Keep the heavy verifier in optimized native code paths and ensure any
-    // cryptographic loops are carefully benchmarked.
+    // High level: decode inputs, run native Groth16 verifier, return ABI bool
+    // Note: production should use proper ABI decoding from the VM and
+    // validate calldata sizes aggressively to avoid DoS vectors.
 
-    // For the prototype, just log the input sizes and return `false`.
+    // Log the call for prototype debugging.
     fmt.Printf("[zktx precompile] Run called: input length=%d\n", len(input))
 
-    // Decode prototype ABI: proof, public, vk
+    // Decode the prototype ABI which contains three length-prefixed blobs:
+    // 1) proof bytes, 2) public inputs bytes, 3) verifying key bytes.
     proofBlob, publicBlob, vkBlob, err := abiDecodeCall(input)
     if err != nil {
         return nil, err
     }
 
+    // Parse the proof structure from the proof blob.
     proof, err := decodeProof(proofBlob)
     if err != nil {
         return nil, err
     }
 
+    // Parse the public inputs from the public blob.
     publicInputs, err := decodePublicInputs(publicBlob)
     if err != nil {
         return nil, err
     }
 
+    // Parse the verifying key used for this proof (IC, alpha, beta, etc.).
     vk, err := decodeVK(vkBlob)
     if err != nil {
         return nil, err
     }
 
+    // Run the native verifier (uses bn254 pairing engine via gnark-crypto).
     ok, err := verifyGroth16(vk, proof, publicInputs)
     if err != nil {
         return nil, err
     }
 
+    // Encode result as a 32-byte ABI boolean (right-aligned: 0 or 1).
     out := make([]byte, 32)
     if ok {
         out[31] = 1

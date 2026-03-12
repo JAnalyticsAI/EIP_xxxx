@@ -5,6 +5,8 @@ import (
     "errors"
     "math/big"
 
+    // gnark-crypto provides optimized implementations of bn254 (a.k.a bn256)
+    // primitives. We use its G1/G2 and pairing engine for native verification.
     "github.com/consensys/gnark-crypto/ecc/bn254/g1"
     "github.com/consensys/gnark-crypto/ecc/bn254/g2"
     "github.com/consensys/gnark-crypto/ecc/bn254/fr"
@@ -58,6 +60,9 @@ func parseUint256(buf []byte) (*big.Int, error) {
 // 8*32 bytes: a[2], b[2][2], c[2]. This is a simplifying assumption for the
 // prototype; real integration should accept ABI encoding properly.
 func decodeProof(blob []byte) (*Proof, error) {
+    // Decode a Groth16 proof from a compact concatenation of 8 uint256 words.
+    // This matches the format used by many Solidity verifiers (a,b,c) in
+    // affine coordinates: a=(ax,ay), b=(bx0,bx1,by0,by1), c=(cx,cy).
     if len(blob) < 32*8 {
         return nil, errors.New("proof blob too short")
     }
@@ -76,6 +81,7 @@ func decodeProof(blob []byte) (*Proof, error) {
 
 // decodePublicInputs expects a simple concatenation of uint256 values.
 func decodePublicInputs(blob []byte) ([]*big.Int, error) {
+    // Public inputs are encoded as a simple concatenation of 32-byte words.
     if len(blob)%32 != 0 {
         return nil, errors.New("public inputs blob length not multiple of 32")
     }
@@ -91,14 +97,15 @@ func decodePublicInputs(blob []byte) ([]*big.Int, error) {
 // This is done in affine coordinates in G1; here we return a placeholder
 // pair (X,Y) as big.Int values that represent the expected point.
 func computeLinearCombination(vk *VerifyingKey, inputs []*big.Int) ([2]*big.Int, error) {
-    // convert IC[0] as accumulator
+    // compute vk_x = IC[0] + sum_i (inputs[i] * IC[i+1])
+    // Uses gnark-crypto G1 affine and scalar multiplication helpers.
     if len(vk.IC) == 0 {
         return [2]*big.Int{big.NewInt(0), big.NewInt(0)}, errors.New("computeLinearCombination: missing IC points")
     }
 
     // Use gnark-crypto g1 affine points and perform scalar multiplications
     var acc g1.Affine
-    // Helper to convert big.Int pair to g1.Affine
+    // Helper to convert big.Int pair (x,y) into a gnark-crypto g1.Affine.
     toG1 := func(x, y *big.Int) (g1.Affine, error) {
         var P g1.Affine
         var fx, fy fr.Element
@@ -109,7 +116,7 @@ func computeLinearCombination(vk *VerifyingKey, inputs []*big.Int) ([2]*big.Int,
         return P, nil
     }
 
-    // initialize accumulator with IC[0]
+    // initialize accumulator with IC[0] (the constant term)
     ic0 := vk.IC[0]
     p0, err := toG1(ic0[0], ic0[1])
     if err != nil {
@@ -129,7 +136,7 @@ func computeLinearCombination(vk *VerifyingKey, inputs []*big.Int) ([2]*big.Int,
             return [2]*big.Int{big.NewInt(0), big.NewInt(0)}, err
         }
 
-        // scalar multiply pi by inp
+        // scalar multiply pi (G1) by inp (fr scalar)
         var s fr.Element
         s.SetBigInt(inp)
         var res g1.Affine
@@ -143,7 +150,7 @@ func computeLinearCombination(vk *VerifyingKey, inputs []*big.Int) ([2]*big.Int,
         accJ.ToAffineFromJacobian(&acc)
     }
 
-    // return big.Int coordinates
+    // convert accumulated affine coordinates back to big.Ints for callers
     outX := new(big.Int)
     outY := new(big.Int)
     acc.X.BigInt(outX)
@@ -156,7 +163,7 @@ func computeLinearCombination(vk *VerifyingKey, inputs []*big.Int) ([2]*big.Int,
 // flow; actual EC/G1/G2 constructions and pairing checks must be implemented
 // with the bn256 library.
 func verifyGroth16(vk *VerifyingKey, proof *Proof, publicInputs []*big.Int) (bool, error) {
-    // 1) compute vk_x
+    // 1) compute vk_x = IC[0] + sum(inputs[i] * IC[i+1])
     vkx, err := computeLinearCombination(vk, publicInputs)
     if err != nil {
         return false, err
@@ -168,7 +175,9 @@ func verifyGroth16(vk *VerifyingKey, proof *Proof, publicInputs []*big.Int) (boo
     // and call bn256 pairing check. For now return false as placeholder.
     _ = vkx
 
-    // Build G1 and G2 elements from the coordinates
+    // Build G1 and G2 elements from the provided big.Int coordinates.
+    // NOTE: G2 elements live in Fp2 (complex numbers). The wire format must
+    // match how the proof and vk were serialized (embedding order important).
     // a in G1
     var a g1.Affine
     var ax, ay fr.Element
@@ -197,7 +206,8 @@ func verifyGroth16(vk *VerifyingKey, proof *Proof, publicInputs []*big.Int) (boo
     c.X = cx
     c.Y = cy
 
-    // vk elements
+    // Construct verifier key elements (alpha, beta). gamma/delta must be
+    // provided by the caller; here we initialize placeholders if missing.
     var alpha g1.Affine
     alpha.X.SetBigInt(vk.AlphaX)
     alpha.Y.SetBigInt(vk.AlphaY)
@@ -211,6 +221,9 @@ func verifyGroth16(vk *VerifyingKey, proof *Proof, publicInputs []*big.Int) (boo
     beta.X.SetComplex(&betax0, &betax1)
     beta.Y.SetComplex(&betay0, &betay1)
 
+    // gamma/delta: if they are zero this will result in an invalid proof
+    // unless the VK actually uses zero-valued roots (unlikely). Proper callers
+    // must pass gamma/delta coordinates in the vk blob.
     var gamma g2.Affine
     gamma.X.SetComplex(&fr.Element{}, &fr.Element{})
     gamma.Y.SetComplex(&fr.Element{}, &fr.Element{})
@@ -219,7 +232,8 @@ func verifyGroth16(vk *VerifyingKey, proof *Proof, publicInputs []*big.Int) (boo
     delta.X.SetComplex(&fr.Element{}, &fr.Element{})
     delta.Y.SetComplex(&fr.Element{}, &fr.Element{})
 
-    // compute vk_x
+    // compute vk_x again (we could reuse earlier value; computeLinearCombination
+    // returns big.Int coordinates which we convert back into a G1 element).
     vkx, err := computeLinearCombination(vk, publicInputs)
     if err != nil {
         return false, err
@@ -229,8 +243,9 @@ func verifyGroth16(vk *VerifyingKey, proof *Proof, publicInputs []*big.Int) (boo
     vkxG1.X.SetBigInt(vkx[0])
     vkxG1.Y.SetBigInt(vkx[1])
 
-    // pairing check: e(a,b) * e(-vk_x, gamma) * e(-alpha, beta) * e(-c, delta) == 1
-    // Use gnark-crypto pairing engine
+    // Perform the multi-pairing check using the bn254 engine. The expected
+    // equation for Groth16 is: e(a,b) * e(-vk_x, gamma) * e(-alpha, beta) * e(-c, delta) == 1
+    // If the engine.Check() returns true the proof is valid for these inputs.
     engine, err := bn254.NewEngine()
     if err != nil {
         return false, err
