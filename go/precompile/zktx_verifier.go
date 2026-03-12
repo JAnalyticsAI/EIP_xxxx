@@ -4,6 +4,12 @@ import (
     "encoding/binary"
     "errors"
     "math/big"
+
+    "github.com/consensys/gnark-crypto/ecc/bn254/g1"
+    "github.com/consensys/gnark-crypto/ecc/bn254/g2"
+    "github.com/consensys/gnark-crypto/ecc/bn254/fr"
+    "github.com/consensys/gnark-crypto/ecc/bn254"
+    "github.com/consensys/gnark-crypto/ecc"
 )
 
 // This file begins an implementation of a native Groth16 verifier for use
@@ -85,13 +91,64 @@ func decodePublicInputs(blob []byte) ([]*big.Int, error) {
 // This is done in affine coordinates in G1; here we return a placeholder
 // pair (X,Y) as big.Int values that represent the expected point.
 func computeLinearCombination(vk *VerifyingKey, inputs []*big.Int) ([2]*big.Int, error) {
-    // TODO: implement G1 scalar multiplications and additions using a bn256
-    // curve library (for example: github.com/consensys/gnark-crypto/ecc/bn254
-    // or github.com/ethereum/go-ethereum/crypto/bn256). The implementation
-    // must convert IC points (big.Int coords) into the curve library's
-    // G1 point representation, perform scalar multiplications by the
-    // corresponding public inputs, and sum the results.
-    return [2]*big.Int{big.NewInt(0), big.NewInt(0)}, errors.New("computeLinearCombination: bn256 operations not implemented")
+    // convert IC[0] as accumulator
+    if len(vk.IC) == 0 {
+        return [2]*big.Int{big.NewInt(0), big.NewInt(0)}, errors.New("computeLinearCombination: missing IC points")
+    }
+
+    // Use gnark-crypto g1 affine points and perform scalar multiplications
+    var acc g1.Affine
+    // Helper to convert big.Int pair to g1.Affine
+    toG1 := func(x, y *big.Int) (g1.Affine, error) {
+        var P g1.Affine
+        var fx, fy fr.Element
+        fx.SetBigInt(x)
+        fy.SetBigInt(y)
+        P.X = fx
+        P.Y = fy
+        return P, nil
+    }
+
+    // initialize accumulator with IC[0]
+    ic0 := vk.IC[0]
+    p0, err := toG1(ic0[0], ic0[1])
+    if err != nil {
+        return [2]*big.Int{big.NewInt(0), big.NewInt(0)}, err
+    }
+    acc = p0
+
+    // For each input, compute IC[i+1] * input[i] and add to acc
+    for i, inp := range inputs {
+        idx := i + 1
+        if idx >= len(vk.IC) {
+            return [2]*big.Int{big.NewInt(0), big.NewInt(0)}, errors.New("computeLinearCombination: not enough IC points for public inputs")
+        }
+        ic := vk.IC[idx]
+        pi, err := toG1(ic[0], ic[1])
+        if err != nil {
+            return [2]*big.Int{big.NewInt(0), big.NewInt(0)}, err
+        }
+
+        // scalar multiply pi by inp
+        var s fr.Element
+        s.SetBigInt(inp)
+        var res g1.Affine
+        g1.MulByScalar(&res, &pi, &s)
+
+        // add res to acc (convert to Jacobian, add, back to affine)
+        var accJ, resJ g1.Jacobian
+        acc.ToJacobian(&accJ)
+        res.ToJacobian(&resJ)
+        accJ.AddAssign(&resJ)
+        accJ.ToAffineFromJacobian(&acc)
+    }
+
+    // return big.Int coordinates
+    outX := new(big.Int)
+    outY := new(big.Int)
+    acc.X.BigInt(outX)
+    acc.Y.BigInt(outY)
+    return [2]*big.Int{outX, outY}, nil
 }
 
 // verifyGroth16 runs the Groth16 pairing check for the proof and public inputs
@@ -111,13 +168,94 @@ func verifyGroth16(vk *VerifyingKey, proof *Proof, publicInputs []*big.Int) (boo
     // and call bn256 pairing check. For now return false as placeholder.
     _ = vkx
 
-    // Integration note: to implement this function, convert the Proof and
-    // VerifyingKey big.Int coordinates into the chosen bn256 library's
-    // point types, then perform a multi-pairing check. Example libraries:
-    // - github.com/consensys/gnark-crypto/ecc/bn254 (recommended for ease of use)
-    // - github.com/ethereum/go-ethereum/crypto/bn256 (uses Cloudflare bn256)
+    // Build G1 and G2 elements from the coordinates
+    // a in G1
+    var a g1.Affine
+    var ax, ay fr.Element
+    ax.SetBigInt(proof.AX)
+    ay.SetBigInt(proof.AY)
+    a.X = ax
+    a.Y = ay
 
-    return false, errors.New("verifyGroth16: bn256 pairing verification not implemented; integrate a bn256 library and construct G1/G2 points from coordinates")
+    // b in G2
+    var b g2.Affine
+    var bx0, bx1, by0, by1 fr.Element
+    // Note: G2 coordinates are typically represented over Fp2; adjust accordingly
+    bx0.SetBigInt(proof.BX[0])
+    bx1.SetBigInt(proof.BX[1])
+    by0.SetBigInt(proof.BY[0])
+    by1.SetBigInt(proof.BY[1])
+    // Construct complex coordinates (c0,c1) for X and Y
+    b.X.SetComplex(&bx0, &bx1)
+    b.Y.SetComplex(&by0, &by1)
+
+    // c in G1
+    var c g1.Affine
+    var cx, cy fr.Element
+    cx.SetBigInt(proof.CX)
+    cy.SetBigInt(proof.CY)
+    c.X = cx
+    c.Y = cy
+
+    // vk elements
+    var alpha g1.Affine
+    alpha.X.SetBigInt(vk.AlphaX)
+    alpha.Y.SetBigInt(vk.AlphaY)
+
+    var beta g2.Affine
+    var betax0, betax1, betay0, betay1 fr.Element
+    betax0.SetBigInt(vk.BetaX[0])
+    betax1.SetBigInt(vk.BetaX[1])
+    betay0.SetBigInt(vk.BetaY[0])
+    betay1.SetBigInt(vk.BetaY[1])
+    beta.X.SetComplex(&betax0, &betax1)
+    beta.Y.SetComplex(&betay0, &betay1)
+
+    var gamma g2.Affine
+    gamma.X.SetComplex(&fr.Element{}, &fr.Element{})
+    gamma.Y.SetComplex(&fr.Element{}, &fr.Element{})
+
+    var delta g2.Affine
+    delta.X.SetComplex(&fr.Element{}, &fr.Element{})
+    delta.Y.SetComplex(&fr.Element{}, &fr.Element{})
+
+    // compute vk_x
+    vkx, err := computeLinearCombination(vk, publicInputs)
+    if err != nil {
+        return false, err
+    }
+
+    var vkxG1 g1.Affine
+    vkxG1.X.SetBigInt(vkx[0])
+    vkxG1.Y.SetBigInt(vkx[1])
+
+    // pairing check: e(a,b) * e(-vk_x, gamma) * e(-alpha, beta) * e(-c, delta) == 1
+    // Use gnark-crypto pairing engine
+    engine, err := bn254.NewEngine()
+    if err != nil {
+        return false, err
+    }
+
+    // add pairs
+    engine.AddPair(&a, &b)
+
+    // -vk_x with gamma
+    var negVkX g1.Affine
+    vkxG1.Neg(&negVkX)
+    engine.AddPair(&negVkX, &gamma)
+
+    // -alpha with beta
+    var negAlpha g1.Affine
+    alpha.Neg(&negAlpha)
+    engine.AddPair(&negAlpha, &beta)
+
+    // -c with delta
+    var negC g1.Affine
+    c.Neg(&negC)
+    engine.AddPair(&negC, &delta)
+
+    ok := engine.Check()
+    return ok, nil
 }
 
 // abiDecodeCall decodes a simple custom ABI where the input is two length-prefixed
