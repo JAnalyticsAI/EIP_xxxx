@@ -1,0 +1,66 @@
+--- a/core/block_validator.go
++++ b/core/block_validator.go
+@@
+ package core
+
+ import (
+     "errors"
+     "fmt"
++    // Add import for the zktx precompile package. Replace the path below
++    // with the path where you copied the package inside your go-ethereum tree.
++    zktx "github.com/<YOUR-FORK>/go-ethereum/core/precompiled/zktx"
+ )
+@@
+ func (bc *BlockChain) validateHeader(header *types.Header) error {
+     // existing header validation logic here ...
+
++    // === ZKTx aggregated-proof header validation ===
++    // If the header contains a ZKTx aggregated-proof marker in Extra, decode
++    // and validate it using the native verifier (precompile). This snippet
++    // is illustrative — adapt to your header encoding conventions and the
++    // exact place in the code you check headers.
++    if len(header.Extra) > 0 {
++        // Example: look for a small magic prefix and length-prefixed blob
++        const prefix = "ZKTXv1"
++        if len(header.Extra) > len(prefix) && string(header.Extra[:len(prefix)]) == prefix {
++            // off := len(prefix)
++            // // decode length and blob (implementation-dependent)
++            // proofBlob := header.Extra[off:]
++
++            // For prototype: call zktx verifier wrapper with the proof blob
++            // (the wrapper should accept the same ABI as the on-chain precompile)
++            // Note: this calls into your local package, not the EVM precompile.
++            // Replace the arguments with the appropriate (proof, public, vk) blob.
++            proofBlob := []byte{} // TODO: extract properly from header
++            publicBlob := []byte{}
++            vkBlob := []byte{}
++
++            // Call into the verifier. The verifier returns an error if invalid.
++            proof, err := zktx.DecodeProofForClient(proofBlob)
++            if err != nil {
++                return fmt.Errorf("zktx: invalid proof encoding: %w", err)
++            }
++
++            vk, err := zktx.DecodeVKForClient(vkBlob)
++            if err != nil {
++                return fmt.Errorf("zktx: invalid vk encoding: %w", err)
++            }
++
++            inputs, err := zktx.DecodePublicInputsForClient(publicBlob)
++            if err != nil {
++                return fmt.Errorf("zktx: invalid public inputs: %w", err)
++            }
++
++            ok, err := zktx.VerifyGroth16ForClient(vk, proof, inputs)
++            if err != nil {
++                return fmt.Errorf("zktx: verifier error: %w", err)
++            }
++            if !ok {
++                return errors.New("zktx: aggregated proof verification failed")
++            }
++            // If ok, continue header validation normally.
++        }
++    }
+
+     // remaining header validation logic ...
+ }
