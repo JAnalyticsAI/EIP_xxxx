@@ -31,6 +31,15 @@ fn main() {
         return;
     }
 
+    if args.len() > 1 && args[1] == "prove" {
+        // run real prover flow (params, keys, create proof, verify locally)
+        match prover::run_prover_example(4) {
+            Ok(_) => println!("Prover flow completed."),
+            Err(e) => println!("Prover flow failed: {}", e),
+        }
+        return;
+    }
+
     // Otherwise run a MockProver verification as a quick test
     let public_inputs = vec![vec![root]];
     let k = 4;
