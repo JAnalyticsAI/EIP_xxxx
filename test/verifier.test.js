@@ -59,4 +59,57 @@ describe("Verifier precompile wrapper tests", function () {
     const ok = await wrapper.verifyAggregatedProof(proof, publicInputs);
     expect(ok).to.equal(false);
   });
+
+  it("(optional) uses generated Groth16 proof and vk to verify via wrapper (skipped if missing)", async function () {
+    const fs = require('fs');
+    const path = require('path');
+    const out = path.join(__dirname, '..', 'zksnark_examples', 'out');
+    const proofPath = path.join(out, 'proof.json');
+    const vkPath = path.join(out, 'verification_key.json');
+    if (!fs.existsSync(proofPath) || !fs.existsSync(vkPath)) {
+      console.log('Skipping generated-proof test; run zksnark_examples/scripts/generate_groth16.sh first');
+      return;
+    }
+
+    const [deployer] = await ethers.getSigners();
+
+    const proof = JSON.parse(fs.readFileSync(proofPath));
+    const publicInputs = JSON.parse(fs.readFileSync(path.join(out, 'public.json')));
+
+    // Build ABI-encoded proof and publicInputs for ReferenceGroth16Verifier
+    const encodedProof = ethers.utils.defaultAbiCoder.encode([
+      'uint256[2]', 'uint256[2][2]', 'uint256[2]'
+    ], [proof.pi_a, proof.pi_b, proof.pi_c]);
+
+    const encodedPublic = ethers.utils.defaultAbiCoder.encode(['uint256[]'], [publicInputs]);
+
+    // Parse vk and construct constructor args (simple parsing)
+    const vk = JSON.parse(fs.readFileSync(vkPath));
+
+    // Flatten IC
+    const ic = [];
+    for (const p of vk.IC) {
+      ic.push(p[0].toString());
+      ic.push(p[1].toString());
+    }
+
+    // Deploy ReferenceGroth16Verifier with vk components
+    const Ref = await ethers.getContractFactory('ReferenceGroth16Verifier');
+    const ref = await Ref.connect(deployer).deploy(
+      vk.vk_alpha_1, // [x,y]
+      [vk.vk_beta_2[0][0], vk.vk_beta_2[0][1], vk.vk_beta_2[1][0], vk.vk_beta_2[1][1]],
+      [vk.vk_gamma_2[0][0], vk.vk_gamma_2[0][1], vk.vk_gamma_2[1][0], vk.vk_gamma_2[1][1]],
+      [vk.vk_delta_2[0][0], vk.vk_delta_2[0][1], vk.vk_delta_2[1][0], vk.vk_delta_2[1][1]],
+      ic
+    );
+    await ref.deployed();
+
+    const Wrapper = await ethers.getContractFactory('VerifierWrapper');
+    const wrapper = await Wrapper.connect(deployer).deploy(ref.address);
+    await wrapper.deployed();
+
+    // Call wrapper verify; expect true for valid proof
+    const ok = await wrapper.verifyAggregatedProof(encodedProof, encodedPublic);
+    expect(ok).to.equal(true);
+  });
 });
