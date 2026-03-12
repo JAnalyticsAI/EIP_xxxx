@@ -85,9 +85,13 @@ func decodePublicInputs(blob []byte) ([]*big.Int, error) {
 // This is done in affine coordinates in G1; here we return a placeholder
 // pair (X,Y) as big.Int values that represent the expected point.
 func computeLinearCombination(vk *VerifyingKey, inputs []*big.Int) ([2]*big.Int, error) {
-    // TODO: implement G1 scalar multiplications and additions using bn256 lib
-    // Placeholder: return zero point
-    return [2]*big.Int{big.NewInt(0), big.NewInt(0)}, nil
+    // TODO: implement G1 scalar multiplications and additions using a bn256
+    // curve library (for example: github.com/consensys/gnark-crypto/ecc/bn254
+    // or github.com/ethereum/go-ethereum/crypto/bn256). The implementation
+    // must convert IC points (big.Int coords) into the curve library's
+    // G1 point representation, perform scalar multiplications by the
+    // corresponding public inputs, and sum the results.
+    return [2]*big.Int{big.NewInt(0), big.NewInt(0)}, errors.New("computeLinearCombination: bn256 operations not implemented")
 }
 
 // verifyGroth16 runs the Groth16 pairing check for the proof and public inputs
@@ -107,7 +111,13 @@ func verifyGroth16(vk *VerifyingKey, proof *Proof, publicInputs []*big.Int) (boo
     // and call bn256 pairing check. For now return false as placeholder.
     _ = vkx
 
-    return false, nil
+    // Integration note: to implement this function, convert the Proof and
+    // VerifyingKey big.Int coordinates into the chosen bn256 library's
+    // point types, then perform a multi-pairing check. Example libraries:
+    // - github.com/consensys/gnark-crypto/ecc/bn254 (recommended for ease of use)
+    // - github.com/ethereum/go-ethereum/crypto/bn256 (uses Cloudflare bn256)
+
+    return false, errors.New("verifyGroth16: bn256 pairing verification not implemented; integrate a bn256 library and construct G1/G2 points from coordinates")
 }
 
 // abiDecodeCall decodes a simple custom ABI where the input is two length-prefixed
