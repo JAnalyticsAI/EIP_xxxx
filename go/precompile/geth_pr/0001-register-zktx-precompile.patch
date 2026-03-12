@@ -1,0 +1,21 @@
+--- a/core/vm/contracts.go
++++ b/core/vm/contracts.go
+@@
+ import (
+     "math/big"
+     "sync"
+
+     "github.com/ethereum/go-ethereum/common"
++    // Register the ZKTx precompile package below. Adjust the import path to
++    // the location where you placed the zktx package in your geth tree.
++    zktx "github.com/<YOUR-FORK>/go-ethereum/core/precompiled/zktx"
+ )
+@@
+ func initPrecompiledContracts() {
+     // ... existing precompile registration code ...
+     precompiles[common.HexToAddress("0x0000000000000000000000000000000000000001")] = ecrecover.New()
+
+     // Register ZKTx precompile at address 0x0B (example). Adjust address
+     // according to your EIP if different.
+     precompiles[common.HexToAddress("0x000000000000000000000000000000000000000B")] = zktx.New()
+ }
