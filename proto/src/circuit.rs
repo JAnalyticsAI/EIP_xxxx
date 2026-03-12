@@ -25,6 +25,12 @@ pub struct TxConfig {
     pub bit_check: Column<Advice>,
     // Poseidon config placeholder
     pub poseidon: PoseidonConfig,
+    // Signature gadget placeholders
+    pub sig_pubkey: Column<Advice>,
+    pub sig_r: Column<Advice>,
+    pub sig_s: Column<Advice>,
+    // Range-check gadget placeholder (decomposed bits column)
+    pub range_bits: Column<Advice>,
 }
 
 impl<F: FieldExt> TxConfig {
@@ -45,7 +51,19 @@ impl<F: FieldExt> TxConfig {
         // Create Poseidon config via gadget helper (may require matching API)
         let poseidon = PoseidonConfig::configure(meta, &[]);
 
-        TxConfig { left, right, out, instance, selector, bit_check, poseidon }
+        // signature gadget columns (placeholder)
+        let sig_pubkey = meta.advice_column();
+        let sig_r = meta.advice_column();
+        let sig_s = meta.advice_column();
+        meta.enable_equality(sig_pubkey);
+        meta.enable_equality(sig_r);
+        meta.enable_equality(sig_s);
+
+        // range-check bits column (placeholder)
+        let range_bits = meta.advice_column();
+        meta.enable_equality(range_bits);
+
+        TxConfig { left, right, out, instance, selector, bit_check, poseidon, sig_pubkey, sig_r, sig_s, range_bits }
     }
 }
 
@@ -127,6 +145,26 @@ impl<F: FieldExt> Circuit<F> for TxCircuit<F> {
             // Constrain the final computed root to equal the public instance at index 0
             let final_cell = current.cell();
             layouter.constrain_instance(final_cell, config.instance, 0)?;
+
+            // --- Signature verification (placeholder) ---
+            // In a full implementation, the signature gadget verifies a Schnorr/BLS
+            // signature proving knowledge of the sender's secret key. Here we assign
+            // placeholder cells for `pubkey`, `r`, and `s` and leave a TODO to
+            // integrate a real gadget.
+            let sig_pub = region.assign_advice(|| "sig_pubkey", config.sig_pubkey, depth + 1, || Value::unknown())?;
+            let sig_r = region.assign_advice(|| "sig_r", config.sig_r, depth + 1, || Value::unknown())?;
+            let sig_s = region.assign_advice(|| "sig_s", config.sig_s, depth + 1, || Value::unknown())?;
+
+            // TODO: invoke real signature gadget here to constrain (pubkey, r, s)
+
+            // --- Range-check (placeholder) ---
+            // Assign a placeholder value representing (balance - amount - fee)
+            // In practice, compute difference in field and decompose into bits,
+            // then constrain bits via a range-check gadget to ensure non-negativity
+            // and bounds (e.g., 128 bits).
+            let diff_val = Value::unknown();
+            let _diff_cell = region.assign_advice(|| "balance_diff", config.range_bits, depth + 2, || diff_val)?;
+            // TODO: decompose `_diff_cell` into bits and enforce booleanity & reconstruction.
 
             Ok(())
         })?;
