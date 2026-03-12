@@ -1,0 +1,15 @@
+[package]
+name = "zk_aggregator_proto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Halo2 proof system (git dependency to zcash/halo2)
+halo2_proofs = { git = "https://github.com/zcash/halo2", package = "halo2_proofs" }
+pasta_curves = "0.3"
+group = "0.9"
+ff = "0.11"
+
+# Note: these versions/resolutions are a starting point. Adjust to a working set
+# for your environment. The circuit implementation in `src/circuit.rs` is a
+# minimal skeleton intended to be expanded with Poseidon and signature gadgets.
