@@ -261,22 +261,75 @@ func verifyGroth16(vk *VerifyingKey, proof *Proof, publicInputs []*big.Int) (boo
 // abiDecodeCall decodes a simple custom ABI where the input is two length-prefixed
 // byte arrays: [len(proof)|proof|len(public)|public]. This is a convenience for
 // the prototype. Replace with proper ABI decoding for production.
-func abiDecodeCall(input []byte) (proofBlob []byte, publicBlob []byte, err error) {
-    if len(input) < 4 {
-        return nil, nil, errors.New("input too short for prototype ABI")
+// abiDecodeCall decodes three length-prefixed byte arrays: proof, public, vk.
+// Layout: [uint32 lenProof][proof][uint32 lenPublic][public][uint32 lenVK][vk]
+func abiDecodeCall(input []byte) (proofBlob []byte, publicBlob []byte, vkBlob []byte, err error) {
+    off := 0
+    if len(input) < off+4 {
+        return nil, nil, nil, errors.New("input too short for prototype ABI")
     }
-    // first 4 bytes: uint32 length of proof
-    plen := int(binary.BigEndian.Uint32(input[:4]))
-    if len(input) < 4+plen+4 {
-        return nil, nil, errors.New("input length mismatch")
+    plen := int(binary.BigEndian.Uint32(input[off : off+4])); off += 4
+    if len(input) < off+plen+4 {
+        return nil, nil, nil, errors.New("input length mismatch for proof")
     }
-    proofBlob = input[4 : 4+plen]
-    off := 4 + plen
-    publen := int(binary.BigEndian.Uint32(input[off : off+4]))
-    off += 4
-    if len(input) < off+publen {
-        return nil, nil, errors.New("input length mismatch for public")
+    proofBlob = input[off : off+plen]; off += plen
+
+    publen := int(binary.BigEndian.Uint32(input[off : off+4])); off += 4
+    if len(input) < off+publen+4 {
+        return nil, nil, nil, errors.New("input length mismatch for public")
     }
-    publicBlob = input[off : off+publen]
-    return proofBlob, publicBlob, nil
+    publicBlob = input[off : off+publen]; off += publen
+
+    vklen := int(binary.BigEndian.Uint32(input[off : off+4])); off += 4
+    if len(input) < off+vklen {
+        return nil, nil, nil, errors.New("input length mismatch for vk")
+    }
+    vkBlob = input[off : off+vklen]
+    return proofBlob, publicBlob, vkBlob, nil
+}
+
+// decodeVK decodes a verifying key encoded as:
+// [uint32 icCount][alpha(2*32)][beta(2*32*2)][gamma(2*32*2)][delta(2*32*2)][IC(icCount * 2*32)]
+func decodeVK(blob []byte) (*VerifyingKey, error) {
+    if len(blob) < 4 {
+        return nil, errors.New("vk blob too short")
+    }
+    off := 0
+    icCount := int(binary.BigEndian.Uint32(blob[off : off+4])); off += 4
+
+    // need at least alpha(64) + beta(128) + gamma(128) + delta(128)
+    headerSize := 64 + 128 + 128 + 128
+    if len(blob) < off+headerSize {
+        return nil, errors.New("vk blob missing header fields")
+    }
+    vk := &VerifyingKey{}
+    vk.AlphaX = new(big.Int).SetBytes(blob[off:off+32]); off += 32
+    vk.AlphaY = new(big.Int).SetBytes(blob[off:off+32]); off += 32
+
+    vk.BetaX[0] = new(big.Int).SetBytes(blob[off:off+32]); off += 32
+    vk.BetaX[1] = new(big.Int).SetBytes(blob[off:off+32]); off += 32
+    vk.BetaY[0] = new(big.Int).SetBytes(blob[off:off+32]); off += 32
+    vk.BetaY[1] = new(big.Int).SetBytes(blob[off:off+32]); off += 32
+
+    vk.GammaX[0] = new(big.Int).SetBytes(blob[off:off+32]); off += 32
+    vk.GammaX[1] = new(big.Int).SetBytes(blob[off:off+32]); off += 32
+    vk.GammaY[0] = new(big.Int).SetBytes(blob[off:off+32]); off += 32
+    vk.GammaY[1] = new(big.Int).SetBytes(blob[off:off+32]); off += 32
+
+    vk.DeltaX[0] = new(big.Int).SetBytes(blob[off:off+32]); off += 32
+    vk.DeltaX[1] = new(big.Int).SetBytes(blob[off:off+32]); off += 32
+    vk.DeltaY[0] = new(big.Int).SetBytes(blob[off:off+32]); off += 32
+    vk.DeltaY[1] = new(big.Int).SetBytes(blob[off:off+32]); off += 32
+
+    // IC points
+    vk.IC = make([][2]*big.Int, icCount)
+    for i := 0; i < icCount; i++ {
+        if len(blob) < off+64 {
+            return nil, errors.New("vk blob truncated in IC points")
+        }
+        x := new(big.Int).SetBytes(blob[off:off+32]); off += 32
+        y := new(big.Int).SetBytes(blob[off:off+32]); off += 32
+        vk.IC[i] = [2]*big.Int{x, y}
+    }
+    return vk, nil
 }

@@ -37,7 +37,35 @@ func (p *ZKTxPrecompile) Run(input []byte) ([]byte, error) {
     // For the prototype, just log the input sizes and return `false`.
     fmt.Printf("[zktx precompile] Run called: input length=%d\n", len(input))
 
-    // Return a 32-byte zero (ABI-encoded `bool false` as 32-byte word).
+    // Decode prototype ABI: proof, public, vk
+    proofBlob, publicBlob, vkBlob, err := abiDecodeCall(input)
+    if err != nil {
+        return nil, err
+    }
+
+    proof, err := decodeProof(proofBlob)
+    if err != nil {
+        return nil, err
+    }
+
+    publicInputs, err := decodePublicInputs(publicBlob)
+    if err != nil {
+        return nil, err
+    }
+
+    vk, err := decodeVK(vkBlob)
+    if err != nil {
+        return nil, err
+    }
+
+    ok, err := verifyGroth16(vk, proof, publicInputs)
+    if err != nil {
+        return nil, err
+    }
+
     out := make([]byte, 32)
+    if ok {
+        out[31] = 1
+    }
     return out, nil
 }
