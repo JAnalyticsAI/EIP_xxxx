@@ -352,3 +352,22 @@ func decodeVK(blob []byte) (*VerifyingKey, error) {
     }
     return vk, nil
 }
+
+// Exported wrappers for client integration. These mirror the functions in the
+// root precompile package and are intended to be used by in-client patches
+// that call into the verifier directly.
+func DecodeProofForClient(blob []byte) (*Proof, error) {
+    return decodeProof(blob)
+}
+
+func DecodeVKForClient(blob []byte) (*VerifyingKey, error) {
+    return decodeVK(blob)
+}
+
+func DecodePublicInputsForClient(blob []byte) ([]*big.Int, error) {
+    return decodePublicInputs(blob)
+}
+
+func VerifyGroth16ForClient(vk *VerifyingKey, proof *Proof, publicInputs []*big.Int) (bool, error) {
+    return verifyGroth16(vk, proof, publicInputs)
+}

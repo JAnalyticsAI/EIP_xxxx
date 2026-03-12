@@ -348,3 +348,23 @@ func decodeVK(blob []byte) (*VerifyingKey, error) {
     }
     return vk, nil
 }
+
+// Exported wrappers for client integration.
+// These functions provide a stable, exported API for client code to decode
+// proof / vk / public inputs and run the native verifier without depending
+// on internal helper names.
+func DecodeProofForClient(blob []byte) (*Proof, error) {
+    return decodeProof(blob)
+}
+
+func DecodeVKForClient(blob []byte) (*VerifyingKey, error) {
+    return decodeVK(blob)
+}
+
+func DecodePublicInputsForClient(blob []byte) ([]*big.Int, error) {
+    return decodePublicInputs(blob)
+}
+
+func VerifyGroth16ForClient(vk *VerifyingKey, proof *Proof, publicInputs []*big.Int) (bool, error) {
+    return verifyGroth16(vk, proof, publicInputs)
+}
